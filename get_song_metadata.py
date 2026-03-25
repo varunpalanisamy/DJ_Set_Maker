@@ -1,11 +1,21 @@
 import json
 import math
+import warnings
 from pathlib import Path
 
+# This hides the "FutureWarning" noise from the terminal
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+import allin1
 import librosa
 import numpy as np
 from mutagen import File as MutagenFile
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SONGS_DIR = PROJECT_ROOT / "songs"
+METADATA_DIR = PROJECT_ROOT / "metadata"
+AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 
 def slugify(text: str) -> str:
     text = text.lower()
@@ -15,314 +25,197 @@ def slugify(text: str) -> str:
         text = text.replace("__", "_")
     return text.strip("_")
 
-
 def parse_title_artist_from_filename(path: Path):
-    """
-    Try to parse 'Artist - Title.ext' from filename.
-    If it fails, return (None, stem).
-    """
     stem = path.stem
     if " - " in stem:
         artist, title = stem.split(" - ", 1)
         return artist.strip(), title.strip()
     return None, stem
 
-
 def read_tags(path: Path):
-    """
-    Try to read metadata tags with mutagen.
-    Returns (artist, title) or (None, None).
-    """
-    print(f"[read_tags] Trying to read tags from {path.name}...")
     try:
         audio = MutagenFile(path)
         if not audio or not audio.tags:
-            print("[read_tags] No tags found.")
             return None, None
-
-        artist = None
-        title = None
-
-        # ID3-style
-        if "TPE1" in audio.tags:
-            artist = str(audio.tags["TPE1"][0])
-        if "TIT2" in audio.tags:
-            title = str(audio.tags["TIT2"][0])
-
-        # Fallback for other formats (e.g. VorbisComments)
-        if not artist:
-            for key in audio.tags.keys():
-                if key.lower().startswith("artist"):
-                    artist = str(audio.tags[key][0])
-                    break
-
-        if not title:
-            for key in audio.tags.keys():
-                if key.lower().startswith("title"):
-                    title = str(audio.tags[key][0])
-                    break
-
-        print(f"[read_tags] Found tags -> artist={artist}, title={title}")
+        artist, title = None, None
+        if "TPE1" in audio.tags: artist = str(audio.tags["TPE1"][0])
+        if "TIT2" in audio.tags: title = str(audio.tags["TIT2"][0])
         return artist, title
-    except Exception as e:
-        print(f"[read_tags] Error reading tags: {e}")
+    except Exception:
         return None, None
 
-
-# ------------------------------
-# Audio feature extraction
-# ------------------------------
+def get_closest_beat(target_time, beat_times):
+    if not beat_times:
+        return 0, target_time
+    idx = min(range(len(beat_times)), key=lambda i: abs(beat_times[i] - target_time))
+    return idx, beat_times[idx]
 
 def compute_loudness_db(y: np.ndarray) -> float:
-    """
-    Simple RMS-based loudness in dBFS.
-    y should be mono float32 in [-1, 1].
-    """
     rms = np.sqrt(np.mean(y ** 2) + 1e-12)
-    loudness_db = 20 * math.log10(rms + 1e-12)
-    return float(loudness_db)
-
+    return float(20 * math.log10(rms + 1e-12))
 
 def infer_energy_score(loudness_db: float) -> float:
-    """
-    Map loudness (roughly between -40 dB and 0 dB) to [0, 1].
-    Clamped to that range.
-    """
     min_db, max_db = -40.0, 0.0
     x = (loudness_db - min_db) / (max_db - min_db)
-    x = max(0.0, min(1.0, x))
-    return float(x)
-
+    return float(max(0.0, min(1.0, x)))
 
 def mood_from_energy(energy: float) -> str:
-    if energy < 0.33:
-        return "chill"
-    elif energy < 0.66:
-        return "medium"
-    else:
-        return "hype"
-
-
-def detect_bpm_and_beats(y: np.ndarray, sr: int):
-    """
-    Returns (bpm, beat_times_list).
-    """
-    print("[detect_bpm_and_beats] Estimating tempo and beats...")
-    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-
-    # Make sure tempo is a plain float, not a numpy array
-    tempo = float(tempo)
-
-    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-    print(f"[detect_bpm_and_beats] Estimated BPM: {tempo:.2f}, beats found: {len(beat_times)}")
-    return float(tempo), beat_times.tolist()
-
-
+    if energy < 0.33: return "chill"
+    elif energy < 0.66: return "medium"
+    else: return "hype"
 
 def estimate_bars_from_beats(beat_times, beats_per_bar=4):
-    """
-    Very simple bar estimation: group beats into sets of N (e.g. 4/4).
-    Returns list of bar start times.
-    """
-    bar_starts = []
-    for i in range(0, len(beat_times), beats_per_bar):
-        bar_starts.append(beat_times[i])
-    print(f"[estimate_bars_from_beats] Estimated {len(bar_starts)} bars.")
-    return bar_starts
-
-
-# ------------------------------
-# Key & Camelot
-# ------------------------------
-
-CAMELOT_MAP_MAJOR = {
-    "C": "8B",
-    "C#": "3B",
-    "Db": "3B",
-    "D": "10B",
-    "D#": "5B",
-    "Eb": "5B",
-    "E": "12B",
-    "F": "7B",
-    "F#": "2B",
-    "Gb": "2B",
-    "G": "9B",
-    "G#": "4B",
-    "Ab": "4B",
-    "A": "11B",
-    "A#": "6B",
-    "Bb": "6B",
-    "B": "1B",
-}
-
-CAMELOT_MAP_MINOR = {
-    "Cm": "5A",
-    "C#m": "12A",
-    "Dbm": "12A",
-    "Dm": "7A",
-    "D#m": "2A",
-    "Ebm": "2A",
-    "Em": "9A",
-    "Fm": "4A",
-    "F#m": "11A",
-    "Gbm": "11A",
-    "Gm": "6A",
-    "G#m": "1A",
-    "Abm": "1A",
-    "Am": "8A",
-    "A#m": "3A",
-    "Bbm": "3A",
-    "Bm": "10A",
-}
-
-PITCH_CLASS_NAMES = ["C", "C#", "D", "D#", "E", "F",
-                     "F#", "G", "G#", "A", "A#", "B"]
-
+    return [beat_times[i] for i in range(0, len(beat_times), beats_per_bar)]
 
 def estimate_key_chroma(y: np.ndarray, sr: int):
-    """
-    Very rough key estimation using average chroma.
-    Returns something like 'C#m' or 'G'.
-    """
-    print("[estimate_key_chroma] Estimating musical key...")
+    PITCH_CLASS_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
     chroma_mean = chroma.mean(axis=1)
-
-    # Most prominent pitch class
     root_idx = int(np.argmax(chroma_mean))
     root_name = PITCH_CLASS_NAMES[root_idx]
-
-    # Super crude major/minor guess:
     major_third_idx = (root_idx + 4) % 12
     minor_third_idx = (root_idx + 3) % 12
-    if chroma_mean[minor_third_idx] > chroma_mean[major_third_idx]:
-        key = f"{root_name}m"
-    else:
-        key = root_name
-
-    print(f"[estimate_key_chroma] Estimated key: {key}")
+    key = f"{root_name}m" if chroma_mean[minor_third_idx] > chroma_mean[major_third_idx] else root_name
     return key
 
-
 def key_to_camelot(key: str):
-    """
-    Map key like 'C#m' or 'G' to Camelot notation if possible.
-    """
-    camelot = None
-    if key.endswith("m"):  # minor
-        camelot = CAMELOT_MAP_MINOR.get(key, None)
-    else:
-        camelot = CAMELOT_MAP_MAJOR.get(key, None)
-    print(f"[key_to_camelot] Key {key} -> Camelot {camelot}")
-    return camelot
-
+    CAMELOT_MAP_MAJOR = {"C": "8B", "C#": "3B", "Db": "3B", "D": "10B", "D#": "5B", "Eb": "5B", "E": "12B", "F": "7B", "F#": "2B", "Gb": "2B", "G": "9B", "G#": "4B", "Ab": "4B", "A": "11B", "A#": "6B", "Bb": "6B", "B": "1B"}
+    CAMELOT_MAP_MINOR = {"Cm": "5A", "C#m": "12A", "Dbm": "12A", "Dm": "7A", "D#m": "2A", "Ebm": "2A", "Em": "9A", "Fm": "4A", "F#m": "11A", "Gbm": "11A", "Gm": "6A", "G#m": "1A", "Abm": "1A", "Am": "8A", "A#m": "3A", "Bbm": "3A", "Bm": "10A"}
+    if key.endswith("m"): return CAMELOT_MAP_MINOR.get(key, None)
+    return CAMELOT_MAP_MAJOR.get(key, None)
 
 # ------------------------------
-# Main analysis function
+# Main Analysis
 # ------------------------------
 
 def analyze_track(path_str: str):
     path = Path(path_str)
     print(f"\n=== Analyzing track: {path.name} ===")
 
-    # ---------- Basic identity ----------
-    print("[analyze_track] Reading tags / filename info...")
     artist_tag, title_tag = read_tags(path)
     artist_fn, title_fn = parse_title_artist_from_filename(path)
-
-    artist = artist_tag or artist_fn or None
+    artist = artist_tag or artist_fn or "Unknown Artist"
     title = title_tag or title_fn or path.stem
+    track_id = slugify(f"{artist}_{title}")
 
-    if artist and title:
-        track_id = slugify(f"{artist}_{title}")
-    else:
-        track_id = slugify(path.stem)
-
-    print(f"[analyze_track] Identified -> track_id={track_id}, artist={artist}, title={title}")
-
-    # ---------- Load audio ----------
-    print("[analyze_track] Loading audio with librosa...")
     y, sr = librosa.load(path, sr=None, mono=True)
     duration_sec = float(librosa.get_duration(y=y, sr=sr))
-    print(f"[analyze_track] Audio loaded: sr={sr}, duration={duration_sec:.2f} sec")
 
-    # ---------- Loudness / energy ----------
-    print("[analyze_track] Computing loudness and energy...")
     loudness_db = compute_loudness_db(y)
     energy_score = infer_energy_score(loudness_db)
     mood_tag = mood_from_energy(energy_score)
-    print(f"[analyze_track] Loudness={loudness_db:.2f} dB, energy_score={energy_score:.3f}, mood={mood_tag}")
-
-    # ---------- Tempo / beats / bars ----------
-    bpm, beat_times = detect_bpm_and_beats(y, sr)
-    bar_start_times = estimate_bars_from_beats(beat_times, beats_per_bar=4)
-
-    # ---------- Key & Camelot ----------
     key = estimate_key_chroma(y, sr)
     camelot_key = key_to_camelot(key)
 
-    # ---------- Build result ----------
-    print("[analyze_track] Building final metadata dict...")
-    result = {
+    print("[analyze_track] Running allin1 ML model...")
+    try:
+        # Simplified call - uses the model to find BPM, beats, and structural labels
+        ml_result = allin1.analyze(str(path.resolve()))
+    except Exception as e:
+        print(f"[analyze_track] CRITICAL ML Error: {e}")
+        return None
+    
+    bpm = float(ml_result.bpm)
+    beat_times = [float(b) for b in ml_result.beats]
+    bar_start_times = estimate_bars_from_beats(beat_times, beats_per_bar=4)
+
+    segments = []
+    for seg in ml_result.segments:
+        start_beat_idx, aligned_start_time = get_closest_beat(seg.start, beat_times)
+        end_beat_idx, aligned_end_time = get_closest_beat(seg.end, beat_times)
+        
+        segments.append({
+            "label": seg.label,
+            "start_beat_index": start_beat_idx,
+            "end_beat_index": end_beat_idx,
+            "aligned_start_time": aligned_start_time,
+            "aligned_end_time": aligned_end_time
+        })
+
+    print("[analyze_track] Done.")
+    return {
         "track_id": track_id,
         "title": title,
         "artist": artist,
         "file_path": str(path.resolve()),
         "duration_sec": duration_sec,
-
         "bpm": bpm,
         "key": key,
         "camelot_key": camelot_key,
-
         "loudness_db": loudness_db,
         "energy_score": energy_score,
         "mood_tag": mood_tag,
-
+        "segments": segments,
         "beat_times": beat_times,
         "bar_start_times": bar_start_times,
     }
 
-    print("[analyze_track] Done.")
-    return result
+
+def get_track_id_for_path(path: Path) -> str:
+    """Resolve the deterministic track_id without running full analysis."""
+    artist_tag, title_tag = read_tags(path)
+    artist_fn, title_fn = parse_title_artist_from_filename(path)
+    artist = artist_tag or artist_fn or "Unknown Artist"
+    title = title_tag or title_fn or path.stem
+    return slugify(f"{artist}_{title}")
 
 
-# ------------------------------
-# CLI entrypoint
-# ------------------------------
+def metadata_output_path(track_id: str, metadata_dir: Path = METADATA_DIR) -> Path:
+    """Return the on-disk metadata path for a track ID."""
+    return metadata_dir / f"{track_id}.json"
+
+
+def load_metadata_file(metadata_path: Path) -> dict:
+    """Load one metadata JSON file from disk."""
+    with metadata_path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def ensure_track_metadata(audio_path: Path, metadata_dir: Path = METADATA_DIR) -> dict | None:
+    """Load cached metadata for a track or analyze and persist it if missing."""
+    track_id = get_track_id_for_path(audio_path)
+    output_path = metadata_output_path(track_id, metadata_dir)
+
+    if output_path.is_file():
+        print(f"[Metadata] Skipping {audio_path.name}: using cached {output_path.name}")
+        return load_metadata_file(output_path)
+
+    metadata = analyze_track(str(audio_path))
+    if metadata is None:
+        return None
+
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2)
+        handle.write("\n")
+
+    print(f"[Metadata] Saved {output_path}")
+    return metadata
+
+
+def analyze_songs_directory(
+    songs_dir: Path = SONGS_DIR,
+    metadata_dir: Path = METADATA_DIR,
+) -> list[dict]:
+    """Analyze all supported audio files in a directory, reusing cached metadata."""
+    if not songs_dir.exists():
+        raise FileNotFoundError(f"songs/ folder not found: {songs_dir}")
+
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    results: list[dict] = []
+    for audio_path in sorted(songs_dir.iterdir()):
+        if audio_path.suffix.lower() not in AUDIO_EXTS:
+            continue
+        metadata = ensure_track_metadata(audio_path, metadata_dir)
+        if metadata is not None:
+            results.append(metadata)
+    return results
 
 if __name__ == "__main__":
-    from pathlib import Path
+    try:
+        analyzed_tracks = analyze_songs_directory()
+    except FileNotFoundError as exc:
+        print(f"[main] {exc}")
+        raise SystemExit(1) from exc
 
-    SONGS_DIR = Path("songs")
-    METADATA_DIR = Path("metadata")
-    AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
-
-    if not SONGS_DIR.exists():
-        print(f"[main] songs/ folder not found at: {SONGS_DIR.resolve()}")
-        raise SystemExit(1)
-
-    METADATA_DIR.mkdir(exist_ok=True)
-    print(f"[main] Scanning folder: {SONGS_DIR.resolve()}")
-    print(f"[main] Metadata will be saved to: {METADATA_DIR.resolve()}")
-
-    # Loop over all audio files in songs/
-    count = 0
-    for audio_path in sorted(SONGS_DIR.iterdir()):
-        if audio_path.suffix.lower() not in AUDIO_EXTS:
-            print(f"[main] Skipping non-audio file: {audio_path.name}")
-            continue
-
-        # Analyze this track
-        meta = analyze_track(str(audio_path))
-
-        # Save to metadata/<track_id>.json
-        track_id = meta.get("track_id", "unknown_track")
-        out_path = METADATA_DIR / f"{track_id}.json"
-
-        with open(out_path, "w") as f:
-            json.dump(meta, f, indent=2)
-
-        print(f"[main] Saved metadata for {audio_path.name} -> {out_path.name}")
-        count += 1
-
-    print(f"\n[main] Done. Processed {count} audio file(s).")
+    print(f"\n[main] Done. Processed {len(analyzed_tracks)} audio file(s).")

@@ -1,4 +1,25 @@
+# Python / virtualenv
 venv/
 .venv/
+__pycache__/
+*.py[cod]
+
+# macOS / local editor noise
+.DS_Store
+.cache
+.cache/
+
+# Generated project artifacts
 songs/
+songs_not_needed/
 metadata/
+stems/
+outputs/
+demix/
+spec/
+stems_temp/
+setlist.json
+*.wav
+
+# Keep frontend source, but ignore packaged/build outputs if they appear later
+frontend/dist/

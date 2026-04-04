@@ -20,6 +20,8 @@ spec/
 stems_temp/
 setlist.json
 *.wav
+*.mp3
+goats/
 
 # Keep frontend source, but ignore packaged/build outputs if they appear later
 frontend/dist/

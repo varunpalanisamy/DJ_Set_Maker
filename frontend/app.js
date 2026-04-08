@@ -17,6 +17,7 @@ const styleList = document.getElementById("style-list");
 const tabButtons = document.querySelectorAll(".nav-tab");
 const downloadView = document.getElementById("download-view");
 const pitchView = document.getElementById("pitch-view");
+const stemView = document.getElementById("stem-view");
 
 const songAList = document.getElementById("song-a-list");
 const songBList = document.getElementById("song-b-list");
@@ -45,6 +46,12 @@ let activePairIndex = 0;
 let librarySongs = [];
 let selectedSongA = null;
 let selectedSongB = null;
+
+// Stem Visualizer state
+let stemSelectedA = null;
+let stemSelectedB = null;
+window.stemSongA = null;
+window.stemSongB = null;
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds)) {
@@ -161,6 +168,7 @@ function switchView(viewName) {
   });
   downloadView.classList.toggle("hidden", viewName !== "download");
   pitchView.classList.toggle("hidden", viewName !== "pitch");
+  stemView.classList.toggle("hidden", viewName !== "stem");
 }
 
 function renderSongList(targetEl, songs, selectedId, onSelect) {
@@ -212,6 +220,7 @@ async function loadSongs() {
     }
     librarySongs = await response.json();
     renderMatcherSelections();
+    renderStemSelections();
     setCompareStatus(`Loaded ${librarySongs.length} analyzed song(s).`, "success");
   } catch (error) {
     setCompareStatus(`Could not load songs: ${error.message}`, "error");
@@ -377,6 +386,87 @@ compareButton.addEventListener("click", async () => {
     setCompareStatus(`Comparison failed: ${error.message}`, "error");
   } finally {
     setCompareState(false);
+  }
+});
+
+// ── Stem Visualizer ──────────────────────────────────────────────────────────
+
+const stemSongAList = document.getElementById("stem-song-a-list");
+const stemSongBList = document.getElementById("stem-song-b-list");
+const stemSongASelected = document.getElementById("stem-song-a-selected");
+const stemSongBSelected = document.getElementById("stem-song-b-selected");
+const btnLoadStems = document.getElementById("btn-load-stems");
+const gradualToggle = document.getElementById("gradual-toggle");
+const btnStyleA = document.getElementById("btn-style-a");
+const btnStyleB = document.getElementById("btn-style-b");
+const btnStyleC = document.getElementById("btn-style-c");
+
+function updateStemControls() {
+  const hasBoth = !!(stemSelectedA && stemSelectedB);
+  btnLoadStems.disabled = !hasBoth;
+  btnStyleA.disabled = !hasBoth;
+  btnStyleB.disabled = !hasBoth;
+  btnStyleC.disabled = !hasBoth;
+}
+
+function renderStemSelections() {
+  renderSongList(stemSongAList, librarySongs, stemSelectedA?.track_id, (song) => {
+    stemSelectedA = song;
+    window.stemSongA = song;
+    stemSongASelected.textContent = formatSongLabel(song);
+    renderStemSelections();
+  });
+
+  renderSongList(stemSongBList, librarySongs, stemSelectedB?.track_id, (song) => {
+    stemSelectedB = song;
+    window.stemSongB = song;
+    stemSongBSelected.textContent = formatSongLabel(song);
+    renderStemSelections();
+  });
+
+  if (!stemSelectedA) stemSongASelected.textContent = "No song selected";
+  if (!stemSelectedB) stemSongBSelected.textContent = "No song selected";
+  updateStemControls();
+}
+
+btnLoadStems.addEventListener("click", () => {
+  if (!stemSelectedA || !stemSelectedB) return;
+  if (window.stemViz) {
+    window.stemViz.prepare(stemSelectedA.track_id, stemSelectedB.track_id);
+  }
+});
+
+function makeStemStyleHandler(styleName) {
+  return () => {
+    if (!stemSelectedA || !stemSelectedB) return;
+    const gradual = gradualToggle ? gradualToggle.checked : false;
+    [btnStyleA, btnStyleB, btnStyleC].forEach((b) => b.classList.remove("active"));
+    const activeBtn = { Style_A: btnStyleA, Style_B: btnStyleB, Style_C: btnStyleC }[styleName];
+    activeBtn?.classList.add("active");
+    if (window.stemViz) {
+      window.stemViz.renderTransition(
+        stemSelectedA.track_id,
+        stemSelectedB.track_id,
+        styleName,
+        gradual
+      );
+    }
+  };
+}
+
+btnStyleA.addEventListener("click", makeStemStyleHandler("Style_A"));
+btnStyleB.addEventListener("click", makeStemStyleHandler("Style_B"));
+btnStyleC.addEventListener("click", makeStemStyleHandler("Style_C"));
+
+// When a transition is rendered, show it in an alert-style status (or player if desired)
+window.addEventListener("stemTransitionReady", (event) => {
+  const { url, label } = event.detail;
+  const statusEl = document.getElementById("stem-status");
+  if (statusEl) {
+    statusEl.innerHTML =
+      `<span class="status success">${label} rendered. </span>` +
+      `<a href="${url}" download style="color:var(--accent);text-decoration:underline;">Download</a>`;
+    statusEl.className = "";
   }
 });
 

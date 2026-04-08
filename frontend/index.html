@@ -22,6 +22,9 @@
           <button id="tab-pitch" class="nav-tab" type="button" data-view="pitch">
             Pitch Matcher
           </button>
+          <button id="tab-stem" class="nav-tab" type="button" data-view="stem">
+            Stem Visualizer
+          </button>
         </nav>
       </aside>
 
@@ -146,9 +149,110 @@
             </div>
           </section>
         </section>
+
+        <!-- ── Stem Visualizer ─────────────────────────────────────────── -->
+        <section id="stem-view" class="view-panel hidden">
+          <p class="eyebrow">Stem Visualizer</p>
+          <h2>Visualize stems across the transition.</h2>
+          <p class="intro">
+            Pick two songs, load their stems, then render a style to see how each layer plays
+            through the transition point.
+          </p>
+
+          <!-- Song pickers -->
+          <div class="matcher-grid">
+            <section class="song-column">
+              <div class="column-header">
+                <p class="player-label">Song A</p>
+                <p id="stem-song-a-selected" class="selection-label">No song selected</p>
+              </div>
+              <div id="stem-song-a-list" class="song-list" role="listbox" aria-label="Song A"></div>
+            </section>
+            <section class="song-column">
+              <div class="column-header">
+                <p class="player-label">Song B</p>
+                <p id="stem-song-b-selected" class="selection-label">No song selected</p>
+              </div>
+              <div id="stem-song-b-list" class="song-list" role="listbox" aria-label="Song B"></div>
+            </section>
+          </div>
+
+          <!-- Controls row -->
+          <div class="stem-controls">
+            <label class="toggle-label" for="gradual-toggle">
+              <span>Gradual BPM</span>
+              <span class="toggle-switch">
+                <input type="checkbox" id="gradual-toggle" />
+                <span class="toggle-slider"></span>
+              </span>
+            </label>
+
+            <button id="btn-load-stems" class="action-button stem-load-btn" type="button" disabled>
+              Load Stems
+            </button>
+
+            <div class="style-buttons">
+              <button id="btn-style-a" class="style-btn" type="button" disabled>Style A</button>
+              <button id="btn-style-b" class="style-btn" type="button" disabled>Style B</button>
+              <button id="btn-style-c" class="style-btn" type="button" disabled>Style C</button>
+            </div>
+          </div>
+
+          <p id="stem-status" class="status" aria-live="polite"></p>
+
+          <!-- Visualizer area (shown after stems load) -->
+          <div id="stem-visualizer-area" class="stem-visualizer-area hidden">
+
+            <!-- Timeline bar row -->
+            <div class="stem-timeline-row">
+              <div class="stem-label-col"></div>
+              <div class="stem-wave-col" style="position:relative;">
+                <div id="timeline-container" class="stem-timeline-track"></div>
+                <div id="stem-transition-marker" class="stem-transition-marker" style="display:none;"></div>
+              </div>
+            </div>
+
+            <!-- Waveform rows -->
+            <div class="stem-row">
+              <div class="stem-label-col">Vocals</div>
+              <div id="waveform-vocals" class="stem-wave-col"></div>
+            </div>
+            <div class="stem-row">
+              <div class="stem-label-col">Drums</div>
+              <div id="waveform-drums" class="stem-wave-col"></div>
+            </div>
+            <div class="stem-row">
+              <div class="stem-label-col">Bass</div>
+              <div id="waveform-bass" class="stem-wave-col"></div>
+            </div>
+            <div class="stem-row">
+              <div class="stem-label-col">Music</div>
+              <div id="waveform-other" class="stem-wave-col"></div>
+            </div>
+
+            <!-- Shared scrollbar -->
+            <div class="stem-scrollbar-row">
+              <div class="stem-label-col"></div>
+              <div class="stem-wave-col">
+                <input id="stem-scrollbar" class="stem-scrollbar" type="range"
+                       min="0" max="1000" value="0" step="1" />
+              </div>
+            </div>
+
+            <!-- Playback controls -->
+            <div class="stem-playback-row">
+              <button id="stem-play-btn" class="play-toggle" type="button">Play</button>
+              <span id="stem-current-time" class="timecode">0:00</span>
+              <span class="timecode" style="color:var(--muted)">/</span>
+              <span id="stem-total-time" class="timecode">0:00</span>
+            </div>
+          </div>
+        </section>
+
       </section>
     </main>
 
     <script src="app.js"></script>
+    <script type="module" src="stem-visualizer.js"></script>
   </body>
 </html>

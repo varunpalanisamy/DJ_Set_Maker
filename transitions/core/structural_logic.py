@@ -78,15 +78,25 @@ def align_segment_end_to_phrase_boundary(
     if end_beat_index % phrase_beats == 0 and end_beat_index < len(beat_times):
         return beat_times[end_beat_index]
 
-    aligned_beat_index = (end_beat_index // phrase_beats) * phrase_beats
-    if aligned_beat_index <= 0 or aligned_beat_index >= len(beat_times):
-        return fallback_time
+    previous_boundary = (end_beat_index // phrase_beats) * phrase_beats
+    next_boundary = previous_boundary + phrase_beats
 
-    print(
-        f"[Logic] Off-grid segment ending at beat {end_beat_index}. "
-        f"Stepping back to beat {aligned_beat_index} for phrase alignment."
-    )
-    return beat_times[aligned_beat_index]
+    if next_boundary < len(beat_times):
+        print(
+            f"[Logic] Off-grid segment ending at beat {end_beat_index}. "
+            f"Snapping forward to beat {next_boundary} for phrase alignment."
+        )
+        return beat_times[next_boundary]
+
+    if previous_boundary > 0 and previous_boundary < len(beat_times):
+        print(
+            f"[Logic] Off-grid segment ending at beat {end_beat_index}. "
+            f"Forward boundary unavailable, snapping backward to beat {previous_boundary} "
+            f"for phrase alignment."
+        )
+        return beat_times[previous_boundary]
+
+    return fallback_time
 
 
 def detect_tempo_zones(metadata: dict) -> list[dict]:
@@ -350,7 +360,7 @@ def get_song_entry_time(metadata: dict) -> float:
                 for segment in merged_segments
                 if segment["label"] in {"start", "intro"}
             ),
-            0.0,
+            float(beat_times[0]) if beat_times else 0.0,
         )
     )
     final_intro_end = (

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -150,10 +151,28 @@ def process_track(track_id: str) -> None:
     print(f"Finished track: {track_id}")
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse optional track IDs for direct stem separation."""
+    parser = argparse.ArgumentParser(
+        description="Separate stems for the current setlist or for explicit track IDs."
+    )
+    parser.add_argument(
+        "track_ids",
+        nargs="*",
+        help="Optional track IDs to process directly. If omitted, uses setlist.json.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Run stem separation for the current setlist."""
-    print("Loading setlist...")
-    setlist_entries = load_setlist(SETLIST_PATH)
+    args = parse_args()
+    if args.track_ids:
+        setlist_entries = args.track_ids
+        print(f"Processing {len(setlist_entries)} explicit track(s)...")
+    else:
+        print("Loading setlist...")
+        setlist_entries = load_setlist(SETLIST_PATH)
 
     STEMS_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Stem output directory ready: {STEMS_DIR}")

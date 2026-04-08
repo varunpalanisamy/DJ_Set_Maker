@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from pydub import AudioSegment
 
 from transitions.tools.audio_utils import (
@@ -11,6 +13,27 @@ from transitions.tools.audio_utils import (
     silence_like,
     standardize_audiosegment,
 )
+
+
+def apply_exponential_fade_in(
+    segment: AudioSegment,
+    floor_gain_db: float = -36.0,
+    chunk_ms: int = 16,
+) -> AudioSegment:
+    """Apply a soft exponential fade-in that stays quiet early and rises near the end."""
+    duration_ms = len(segment)
+    if duration_ms <= 1:
+        return segment
+
+    processed = AudioSegment.empty()
+    for start_ms in range(0, duration_ms, chunk_ms):
+        end_ms = min(duration_ms, start_ms + chunk_ms)
+        chunk = segment[start_ms:end_ms]
+        progress = end_ms / duration_ms
+        curved_progress = (math.exp(3.0 * progress) - 1.0) / (math.exp(3.0) - 1.0)
+        gain_db = floor_gain_db * (1.0 - curved_progress)
+        processed += chunk.apply_gain(gain_db)
+    return processed
 
 
 def build_song_a_loop_window(
@@ -104,6 +127,7 @@ def build_song_b_transition_window(
 
 def apply_song_a_cue_pickup(
     style_name: str,
+    stem_name: str,
     prefix: AudioSegment,
     segment: AudioSegment,
     chorus_block_ms: tuple[int, int] | None,
@@ -121,6 +145,6 @@ def apply_song_a_cue_pickup(
     if len(pickup_audio) == 0:
         return prefix
 
-    pickup_audio = standardize_audiosegment(pickup_audio)
+    pickup_audio = apply_exponential_fade_in(standardize_audiosegment(pickup_audio))
     overlay_position = max(0, len(prefix) - len(pickup_audio))
     return standardize_audiosegment(prefix).overlay(pickup_audio, position=overlay_position)

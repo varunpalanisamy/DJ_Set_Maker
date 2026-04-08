@@ -113,6 +113,7 @@ def apply_song_a_automation(
     prefix = segment[:transition_start_ms]
     prefix = apply_song_a_cue_pickup(
         style_name=style_name,
+        stem_name=stem_name,
         prefix=prefix,
         segment=segment,
         chorus_block_ms=chorus_block_ms,
@@ -192,6 +193,7 @@ def render_style(
             prefix = stem_audio[:transition_start_ms]
             prefix = apply_song_a_cue_pickup(
                 style_name=style_name,
+                stem_name=stem_name,
                 prefix=prefix,
                 segment=stem_audio,
                 chorus_block_ms=chorus_block_ms,

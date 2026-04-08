@@ -30,8 +30,8 @@ def create_metronome_test(json_path, audio_path, output_path):
 
 # --- Run the test ---
 # Replace these paths with your actual file locations
-JSON_FILE = "metadata/just_wanna_rock.json" 
-AUDIO_FILE = "songs/just_wanna_rock.mp3"
-OUTPUT_FILE = "fein_metronome_test.wav"
+JSON_FILE = "metadata/kendrick_lamar_swimming_pools_lyrics.json" 
+AUDIO_FILE = "songs/Kendrick Lamar - Swimming Pools (Lyrics).mp3"
+OUTPUT_FILE = "metronome_test.wav"
 
 create_metronome_test(JSON_FILE, AUDIO_FILE, OUTPUT_FILE)

@@ -52,10 +52,16 @@ from transitions.styles.style_router import (
 )
 from transitions.tools.audio_utils import (
     STEM_NAMES,
+    apply_gain_to_region,
     apply_micro_fades,
     combine_segments,
+    detect_low_end_collision,
     overlay_stems,
+    overlay_segments_raw,
+    overlay_with_headroom,
     pad_to_length,
+    protect_from_clipping,
+    safe_max_dbfs,
     standardize_audiosegment,
 )
 from transitions.tools.warper import warp_song_b_stems, warp_transition_segment
@@ -108,6 +114,7 @@ def apply_song_a_automation(
     beat_ms: int,
     chorus_block_ms: tuple[int, int] | None,
     song_a_pickup_ms: int,
+    enable_low_end_management: bool,
 ) -> AudioSegment:
     """Apply Song A automation for one style."""
     prefix = segment[:transition_start_ms]
@@ -127,6 +134,7 @@ def apply_song_a_automation(
         transition_ms=transition_ms,
         beat_ms=beat_ms,
         chorus_block_ms=chorus_block_ms,
+        enable_low_end_management=enable_low_end_management,
     )
     prefix = standardize_audiosegment(prefix)
     processed_window = standardize_audiosegment(processed_window)
@@ -185,47 +193,50 @@ def render_style(
     song_b_target_checkpoint_ms: list[int] | None = None,
 ) -> Path:
     """Render one transition style and export it."""
-    if song_a_ramp_bpm is not None:
-        if gradual_temp_dir is None or song_a_source_transition_ms is None:
-            raise ValueError("Gradual Song A rendering requires a temp dir and source duration.")
-        processed_a = {}
-        for stem_name, stem_audio in stems_a.items():
-            prefix = stem_audio[:transition_start_ms]
-            prefix = apply_song_a_cue_pickup(
-                style_name=style_name,
-                stem_name=stem_name,
-                prefix=prefix,
-                segment=stem_audio,
-                chorus_block_ms=chorus_block_ms,
-                song_a_pickup_ms=song_a_pickup_ms,
-            )
-            source_window = build_song_a_loop_window(
-                segment=stem_audio,
-                transition_start_ms=transition_start_ms,
-                transition_ms=song_a_source_transition_ms,
-                beat_ms=beat_ms,
-                chorus_block_ms=chorus_block_ms,
-            )
-            warped_window = warp_transition_segment(
-                segment=source_window,
-                start_bpm=song_a_ramp_bpm[0],
-                end_bpm=song_a_ramp_bpm[1],
-                target_duration_ms=song_a_ramp_bpm[2],
-                temp_dir=gradual_temp_dir / "song_a",
-                stem_name=f"{style_name}_{stem_name}",
-                source_checkpoint_ms=song_a_source_checkpoint_ms,
-                target_checkpoint_ms=song_b_target_checkpoint_ms,
-            )
-            warped_window = pad_to_length(warped_window, transition_ms)
-            styled_window = apply_song_a_transition_style(
-                style_name=style_name,
-                stem_name=stem_name,
-                window=warped_window[:transition_ms],
-                beat_ms=beat_ms,
-            )
-            processed_a[stem_name] = combine_segments([prefix, styled_window], stem_audio)
-    else:
-        processed_a = {
+    def build_processed_a(enable_low_end_management: bool) -> dict[str, AudioSegment]:
+        if song_a_ramp_bpm is not None:
+            if gradual_temp_dir is None or song_a_source_transition_ms is None:
+                raise ValueError("Gradual Song A rendering requires a temp dir and source duration.")
+            processed: dict[str, AudioSegment] = {}
+            for stem_name, stem_audio in stems_a.items():
+                prefix = stem_audio[:transition_start_ms]
+                prefix = apply_song_a_cue_pickup(
+                    style_name=style_name,
+                    stem_name=stem_name,
+                    prefix=prefix,
+                    segment=stem_audio,
+                    chorus_block_ms=chorus_block_ms,
+                    song_a_pickup_ms=song_a_pickup_ms,
+                )
+                source_window = build_song_a_loop_window(
+                    segment=stem_audio,
+                    transition_start_ms=transition_start_ms,
+                    transition_ms=song_a_source_transition_ms,
+                    beat_ms=beat_ms,
+                    chorus_block_ms=chorus_block_ms,
+                )
+                warped_window = warp_transition_segment(
+                    segment=source_window,
+                    start_bpm=song_a_ramp_bpm[0],
+                    end_bpm=song_a_ramp_bpm[1],
+                    target_duration_ms=song_a_ramp_bpm[2],
+                    temp_dir=gradual_temp_dir / "song_a",
+                    stem_name=f"{style_name}_{stem_name}",
+                    source_checkpoint_ms=song_a_source_checkpoint_ms,
+                    target_checkpoint_ms=song_b_target_checkpoint_ms,
+                )
+                warped_window = pad_to_length(warped_window, transition_ms)
+                styled_window = apply_song_a_transition_style(
+                    style_name=style_name,
+                    stem_name=stem_name,
+                    window=warped_window[:transition_ms],
+                    beat_ms=beat_ms,
+                    enable_low_end_management=enable_low_end_management,
+                )
+                processed[stem_name] = combine_segments([prefix, styled_window], stem_audio)
+            return processed
+
+        return {
             stem_name: apply_song_a_automation(
                 style_name=style_name,
                 stem_name=stem_name,
@@ -235,9 +246,72 @@ def render_style(
                 beat_ms=beat_ms,
                 chorus_block_ms=chorus_block_ms,
                 song_a_pickup_ms=song_a_pickup_ms,
+                enable_low_end_management=enable_low_end_management,
             )
             for stem_name, stem_audio in stems_a.items()
         }
+
+    def stabilize_transition_peak_levels(
+        processed_song_a: dict[str, AudioSegment],
+        processed_song_b: dict[str, AudioSegment],
+    ) -> tuple[dict[str, AudioSegment], dict[str, AudioSegment]]:
+        peak_ceiling = -0.1
+        max_iterations = 10
+        candidate_order = (
+            ("song_b", "bass"),
+            ("song_b", "drums"),
+            ("song_a", "bass"),
+            ("song_a", "drums"),
+            ("song_b", "other"),
+            ("song_a", "other"),
+            ("song_b", "vocals"),
+            ("song_a", "vocals"),
+        )
+
+        for _ in range(max_iterations):
+            overlap_components: list[AudioSegment] = []
+            component_peaks: list[tuple[str, str, float]] = []
+
+            for track_name, stem_name in candidate_order:
+                if track_name == "song_a":
+                    component = pad_to_length(
+                        processed_song_a[stem_name][overlay_start_ms : overlay_start_ms + song_b_window_ms],
+                        song_b_window_ms,
+                    )
+                else:
+                    component = pad_to_length(processed_song_b[stem_name][:song_b_window_ms], song_b_window_ms)
+                overlap_components.append(component)
+                component_peaks.append((track_name, stem_name, safe_max_dbfs(component)))
+
+            combined_overlap = overlay_segments_raw(overlap_components)
+            if safe_max_dbfs(combined_overlap) <= peak_ceiling:
+                break
+
+            offending_track, offending_stem, offending_peak = max(component_peaks, key=lambda item: item[2])
+            if offending_peak == float("-inf"):
+                break
+
+            reduction_db = min(3.5, max(1.0, safe_max_dbfs(combined_overlap) - peak_ceiling + 0.5))
+            if offending_track == "song_a":
+                processed_song_a[offending_stem] = apply_gain_to_region(
+                    processed_song_a[offending_stem],
+                    overlay_start_ms,
+                    overlay_start_ms + song_b_window_ms,
+                    -reduction_db,
+                )
+            else:
+                processed_song_b[offending_stem] = apply_gain_to_region(
+                    processed_song_b[offending_stem],
+                    0,
+                    song_b_window_ms,
+                    -reduction_db,
+                )
+            print(
+                f"[Mix] Peak protection reduced {offending_track} {offending_stem} "
+                f"by {reduction_db:.1f} dB in the transition window."
+            )
+
+        return processed_song_a, processed_song_b
 
     processed_b = {
         stem_name: apply_song_b_automation(
@@ -251,12 +325,39 @@ def render_style(
         for stem_name, stem_audio in stems_b_transition.items()
     }
 
-    mix_a = overlay_stems(processed_a)
-    mix_b = overlay_stems(processed_b)
     song_b_window_ms = song_b_pickup_ms + transition_ms
     overlay_start_ms = max(0, transition_start_ms - song_b_pickup_ms)
+    processed_a = build_processed_a(enable_low_end_management=False)
+
+    low_end_collision = detect_low_end_collision(
+        pad_to_length(processed_a["bass"][overlay_start_ms : overlay_start_ms + song_b_window_ms], song_b_window_ms)
+        .overlay(
+            pad_to_length(processed_a["drums"][overlay_start_ms : overlay_start_ms + song_b_window_ms], song_b_window_ms)
+        ),
+        pad_to_length(processed_b["bass"][:song_b_window_ms], song_b_window_ms).overlay(
+            pad_to_length(processed_b["drums"][:song_b_window_ms], song_b_window_ms)
+        ),
+    )
+    if low_end_collision:
+        print("[Mix] Low-end collision detected. Applying bass/drum ducking and filtering.")
+        processed_a = build_processed_a(enable_low_end_management=True)
+
+    processed_a, processed_b = stabilize_transition_peak_levels(processed_a, processed_b)
+
+    mix_a = overlay_stems(processed_a)
+    mix_b = overlay_stems(processed_b)
     mix_a_with_transition = pad_to_length(mix_a, transition_start_ms + transition_ms)
-    overlap_mix = mix_a_with_transition.overlay(mix_b[:song_b_window_ms], position=overlay_start_ms)
+    if low_end_collision:
+        overlap_mix = overlay_with_headroom(
+            mix_a_with_transition,
+            mix_b[:song_b_window_ms],
+            position=overlay_start_ms,
+        )
+    else:
+        overlap_mix = mix_a_with_transition.overlay(
+            mix_b[:song_b_window_ms],
+            position=overlay_start_ms,
+        )
 
     song_b_body_stems = {
         stem_name: stem_audio[song_b_target_ms:]
@@ -268,6 +369,7 @@ def render_style(
         standardize_audiosegment(song_b_body_mix),
         crossfade=min(2, len(overlap_mix), len(song_b_body_mix)),
     )
+    final_mix = protect_from_clipping(final_mix)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_mix.export(output_path, format="mp3", bitrate="320k")

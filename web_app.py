@@ -7,17 +7,25 @@ import json
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+from pydub import AudioSegment
 
 from get_song_metadata import AUDIO_EXTS, SONGS_DIR, analyze_songs_directory, ensure_track_metadata
 from main import order_setlist_by_bpm
 from render_transition import OUTPUTS_DIR, render_all_styles
-from separate_stems import process_track
+from separate_stems import STEMS_DIR, process_track
 from transitions.core.audio_analysis import calculate_compatibility
+from transitions.core.structural_logic import (
+    get_optimal_exit_time,
+    get_song_entry_time,
+    load_metadata as load_track_metadata,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 METADATA_DIR = PROJECT_ROOT / "metadata"
+TEMP_VIZ_DIR = PROJECT_ROOT / "temp_viz"
+STYLE_NAMES = ["Style_A", "Style_B", "Style_C"]
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 
@@ -51,6 +59,16 @@ def build_style_payload(output_paths: list[Path]) -> list[dict]:
             }
         )
     return styles
+
+
+def all_transitions_rendered(pair_output_dir: Path) -> bool:
+    """Return True when all 6 output files (3 styles × constant + gradual) already exist."""
+    for name in STYLE_NAMES:
+        if not (pair_output_dir / f"{name}.mp3").is_file():
+            return False
+        if not (pair_output_dir / "gradual_bpm" / f"{name}.mp3").is_file():
+            return False
+    return True
 
 
 def build_pair_payload(song_a_id: str, song_b_id: str, output_paths: list[Path]) -> dict:
@@ -208,6 +226,143 @@ def process_upload():
         "pair_label": first_pair["label"],
     }
     return jsonify(payload)
+
+
+@app.get("/stems/<song_id>/<filename>")
+def serve_stem(song_id: str, filename: str):
+    """Serve individual stem files for the visualizer."""
+    return send_from_directory(STEMS_DIR / song_id, filename)
+
+
+@app.get("/temp_viz/<path:filename>")
+def serve_temp_viz(filename: str):
+    """Serve concatenated visualization audio files."""
+    return send_from_directory(TEMP_VIZ_DIR, filename)
+
+
+@app.post("/api/stem_visualizer/prepare")
+def prepare_stem_visualizer():
+    """Ensure stems exist, concatenate them for visualization, and return timing info."""
+    payload = request.get_json(silent=True) or {}
+    song_a_id = str(payload.get("song_a_id") or "").strip()
+    song_b_id = str(payload.get("song_b_id") or "").strip()
+
+    if not song_a_id or not song_b_id:
+        return jsonify({"error": "song_a_id and song_b_id are required."}), 400
+
+    try:
+        print(f"[StemViz] Ensuring stems for {song_a_id}")
+        process_track(song_a_id)
+        print(f"[StemViz] Ensuring stems for {song_b_id}")
+        process_track(song_b_id)
+
+        meta_a = load_track_metadata(song_a_id)
+        meta_b = load_track_metadata(song_b_id)
+        song_a_exit_time = get_optimal_exit_time(meta_a)
+        song_b_entry_time = get_song_entry_time(meta_b)
+
+        TEMP_VIZ_DIR.mkdir(parents=True, exist_ok=True)
+        concat_dir = TEMP_VIZ_DIR / f"{song_a_id}_to_{song_b_id}"
+        concat_dir.mkdir(parents=True, exist_ok=True)
+
+        stem_names = ["vocals", "drums", "bass", "other"]
+
+        # Skip concatenation if all output files are already current
+        concat_exists = all((concat_dir / f"{s}.mp3").is_file() for s in stem_names)
+
+        stem_urls: dict[str, str] = {}
+        song_a_duration_sec: float | None = None
+
+        if not concat_exists:
+            print(f"[StemViz] Concatenating stems for visualization...")
+            for stem in stem_names:
+                path_a = STEMS_DIR / song_a_id / f"{stem}.mp3"
+                path_b = STEMS_DIR / song_b_id / f"{stem}.mp3"
+
+                if not path_a.is_file() or not path_b.is_file():
+                    return jsonify({"error": f"Stem file missing: {stem}"}), 500
+
+                seg_a = AudioSegment.from_mp3(str(path_a))
+                seg_b = AudioSegment.from_mp3(str(path_b))
+
+                if song_a_duration_sec is None:
+                    song_a_duration_sec = len(seg_a) / 1000.0
+
+                combined = seg_a + seg_b
+                out_path = concat_dir / f"{stem}.mp3"
+                combined.export(str(out_path), format="mp3", bitrate="128k")
+        else:
+            print(f"[StemViz] Reusing cached concatenated stems.")
+
+        if song_a_duration_sec is None:
+            # Read duration from cached file
+            seg_a = AudioSegment.from_mp3(str(STEMS_DIR / song_a_id / "vocals.mp3"))
+            song_a_duration_sec = len(seg_a) / 1000.0
+
+        for stem in stem_names:
+            stem_urls[stem] = f"/temp_viz/{song_a_id}_to_{song_b_id}/{stem}.mp3"
+
+        song_a_dur = song_a_duration_sec or 0.0
+        return jsonify({
+            "stems": stem_urls,
+            "song_a_exit_time": song_a_exit_time,
+            "song_a_duration": song_a_dur,
+            "song_b_entry_time": song_b_entry_time,
+            "song_b_entry_in_combined": song_a_dur + song_b_entry_time,
+        })
+
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": f"Preparation failed: {exc}"}), 500
+
+
+@app.post("/api/stem_visualizer/render")
+def render_stem_transition():
+    """Render a specific transition style and return its URL."""
+    payload = request.get_json(silent=True) or {}
+    song_a_id = str(payload.get("song_a_id") or "").strip()
+    song_b_id = str(payload.get("song_b_id") or "").strip()
+    style_name = str(payload.get("style") or "Style_A").strip()
+    gradual = bool(payload.get("gradual", False))
+
+    if not song_a_id or not song_b_id:
+        return jsonify({"error": "song_a_id and song_b_id are required."}), 400
+
+    if style_name not in STYLE_NAMES:
+        return jsonify({"error": f"style must be one of {STYLE_NAMES}."}), 400
+
+    try:
+        process_track(song_a_id)
+        process_track(song_b_id)
+
+        pair_output_dir = OUTPUTS_DIR / f"{song_a_id}_to_{song_b_id}"
+
+        if not all_transitions_rendered(pair_output_dir):
+            print(f"[StemViz] Rendering all styles for {song_a_id} -> {song_b_id}")
+            render_all_styles(song_a_id, song_b_id, pair_output_dir)
+
+        style_path = (
+            pair_output_dir / "gradual_bpm" / f"{style_name}.mp3"
+            if gradual
+            else pair_output_dir / f"{style_name}.mp3"
+        )
+
+        if not style_path.is_file():
+            return jsonify({"error": f"Output file not found after rendering: {style_path}"}), 404
+
+        relative = style_path.relative_to(OUTPUTS_DIR)
+        label = style_name.replace("_", " ") + (" · Gradual" if gradual else " · Constant")
+        return jsonify({
+            "url": f"/outputs/{relative.as_posix()}",
+            "saved_path": str(style_path.relative_to(PROJECT_ROOT)),
+            "label": label,
+        })
+
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": f"Render failed: {exc}"}), 500
 
 
 if __name__ == "__main__":

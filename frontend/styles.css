@@ -440,6 +440,221 @@ h2 {
   font-weight: 700;
 }
 
+/* ── Stem Visualizer ─────────────────────────────────────────────────────── */
+
+.stem-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  transition: background 200ms, border-color 200ms;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  top: 2px;
+  left: 2px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: transform 200ms, background 200ms;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: rgba(57, 208, 191, 0.22);
+  border-color: rgba(57, 208, 191, 0.55);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background: var(--accent);
+}
+
+.stem-load-btn {
+  padding: 12px 22px;
+}
+
+.style-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.style-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.style-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(57, 208, 191, 0.5);
+  background: rgba(57, 208, 191, 0.08);
+}
+
+.style-btn.active {
+  border-color: rgba(57, 208, 191, 0.8);
+  background: rgba(57, 208, 191, 0.14);
+  color: var(--accent-strong);
+}
+
+.style-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Visualizer container */
+.stem-visualizer-area {
+  margin-top: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: var(--panel-alt);
+  overflow: hidden;
+}
+
+/* Shared layout: label column + wave column */
+.stem-timeline-row,
+.stem-row,
+.stem-scrollbar-row,
+.stem-playback-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.stem-label-col {
+  flex-shrink: 0;
+  width: 72px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+
+.stem-wave-col {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Timeline bar */
+.stem-timeline-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stem-timeline-track {
+  width: 100%;
+  min-height: 26px;
+}
+
+.stem-transition-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 80, 60, 0.85);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.stem-transition-marker::after {
+  content: attr(title);
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 700;
+  color: #ff6040;
+  letter-spacing: 0.04em;
+  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+}
+
+/* Waveform rows */
+.stem-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.stem-row:last-of-type {
+  border-bottom: none;
+}
+
+/* Hide webkit scrollbars on waveform wrappers (added by JS too) */
+.stem-wave-col ::-webkit-scrollbar {
+  display: none;
+}
+
+/* Shared scrollbar */
+.stem-scrollbar-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.stem-scrollbar {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Playback controls */
+.stem-playback-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .hidden {
   display: none;
 }

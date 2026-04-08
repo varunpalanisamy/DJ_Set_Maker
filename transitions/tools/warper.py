@@ -23,12 +23,15 @@ STEMS_DIR = PROJECT_ROOT / "stems"
 
 
 def offset_checkpoint_ms(checkpoints: list[int] | None, offset_ms: int) -> list[int] | None:
-    """Shift checkpoint times forward by a pickup offset."""
+    """Shift checkpoint times forward by a pickup offset and preserve absolute file start."""
     if checkpoints is None:
         return None
-    if offset_ms <= 0:
-        return list(checkpoints)
-    return [max(0, int(checkpoint) + offset_ms) for checkpoint in checkpoints]
+    shifted = [0]
+    for checkpoint in checkpoints:
+        shifted_checkpoint = max(0, int(checkpoint) + max(0, offset_ms))
+        if shifted_checkpoint > shifted[-1]:
+            shifted.append(shifted_checkpoint)
+    return shifted
 
 
 def ensure_tool_available(tool_name: str) -> None:
@@ -216,7 +219,7 @@ def warp_song_b_stems(
     converted_dir.mkdir(parents=True, exist_ok=True)
     warped_dir.mkdir(parents=True, exist_ok=True)
     source_seek_ms = max(0, original_song_b_entry_ms - pickup_ms)
-    source_segment_ms = transition_source_duration_ms + pickup_ms
+    total_source_duration_ms = transition_source_duration_ms + pickup_ms
 
     for stem_name in STEM_NAMES:
         input_path = next(
@@ -262,28 +265,30 @@ def warp_song_b_stems(
                 "-ar",
                 str(MASTER_TRANSITION_SAMPLE_RATE),
                 "-t",
-                f"{source_segment_ms / 1000.0:.6f}",
+                f"{total_source_duration_ms / 1000.0:.6f}",
                 str(segment_path),
             ]
         )
 
         rubberband_command = ["rubberband"]
         if tempo_map is not None:
-            target_segment_ms = tempo_map[2] + target_pickup_ms
+            total_target_duration_ms = tempo_map[2] + target_pickup_ms
+            shifted_source = offset_checkpoint_ms(source_checkpoint_ms, pickup_ms)
+            shifted_target = offset_checkpoint_ms(target_checkpoint_ms, target_pickup_ms)
             tempo_map_path = generate_tempo_map(
-                source_duration_ms=source_segment_ms,
-                target_duration_ms=target_segment_ms,
+                source_duration_ms=total_source_duration_ms,
+                target_duration_ms=total_target_duration_ms,
                 start_bpm=tempo_map[0],
                 end_bpm=tempo_map[1],
                 sample_rate=MASTER_TRANSITION_SAMPLE_RATE,
                 output_path=converted_dir / f"{stem_name}_tempo_map.txt",
-                source_checkpoint_ms=offset_checkpoint_ms(source_checkpoint_ms, pickup_ms),
-                target_checkpoint_ms=offset_checkpoint_ms(target_checkpoint_ms, target_pickup_ms),
+                source_checkpoint_ms=shifted_source,
+                target_checkpoint_ms=shifted_target,
             )
             rubberband_command.extend(
                 [
                     "--duration",
-                    f"{target_segment_ms / 1000.0:.6f}",
+                    f"{total_target_duration_ms / 1000.0:.6f}",
                     "--timemap",
                     str(tempo_map_path),
                 ]

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -11,10 +12,12 @@ from get_song_metadata import AUDIO_EXTS, SONGS_DIR, analyze_songs_directory, en
 from main import order_setlist_by_bpm
 from render_transition import OUTPUTS_DIR, render_all_styles
 from separate_stems import process_track
+from transitions.core.audio_analysis import calculate_compatibility
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+METADATA_DIR = PROJECT_ROOT / "metadata"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 
@@ -76,6 +79,52 @@ def favicon():
 def serve_output(filename: str):
     """Serve rendered output audio files."""
     return send_from_directory(OUTPUTS_DIR, filename)
+
+
+@app.get("/api/songs")
+def list_songs():
+    """Return locally analyzed songs for the Pitch Matcher UI."""
+    if not METADATA_DIR.is_dir():
+        return jsonify([])
+
+    songs: list[dict] = []
+    for metadata_path in sorted(METADATA_DIR.glob("*.json")):
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        track_id = metadata.get("track_id")
+        if not track_id:
+            continue
+        songs.append(
+            {
+                "track_id": str(track_id),
+                "title": str(metadata.get("title") or track_id),
+                "artist": str(metadata.get("artist") or "Unknown Artist"),
+                "key": str(metadata.get("key") or "Unknown"),
+                "camelot_key": str(metadata.get("camelot_key") or "Unknown"),
+            }
+        )
+
+    songs.sort(key=lambda item: (item["title"].lower(), item["artist"].lower()))
+    return jsonify(songs)
+
+
+@app.post("/api/compare")
+def compare_songs():
+    """Run the advanced compatibility analysis for two selected songs."""
+    payload = request.get_json(silent=True) or {}
+    song_a_id = str(payload.get("song_a_id") or "").strip()
+    song_b_id = str(payload.get("song_b_id") or "").strip()
+    if not song_a_id or not song_b_id:
+        return jsonify({"error": "song_a_id and song_b_id are required."}), 400
+
+    try:
+        result = calculate_compatibility(song_a_id, song_b_id)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": f"Comparison failed: {exc}"}), 500
+
+    return jsonify(result)
 
 
 @app.post("/process")

@@ -7,7 +7,9 @@ import math
 from pydub import AudioSegment
 
 from transitions.tools.audio_utils import (
+    apply_high_pass,
     combine_segments,
+    linear_gain_to_db,
     loop_to_duration,
     pad_to_length,
     silence_like,
@@ -58,10 +60,13 @@ def apply_song_a_transition_style(
     stem_name: str,
     window: AudioSegment,
     beat_ms: int,
+    enable_low_end_management: bool = True,
 ) -> AudioSegment:
     """Apply the style-specific automation to Song A's transition window."""
     transition_ms = len(window)
     fade_tail_ms = min(beat_ms * 4, transition_ms)
+    if enable_low_end_management:
+        window = apply_song_a_low_end_management(style_name, stem_name, window)
 
     if style_name == "Style_A":
         if stem_name == "vocals":
@@ -81,6 +86,42 @@ def apply_song_a_transition_style(
     raise ValueError(f"Unknown style: {style_name}")
 
 
+def apply_song_a_low_end_management(
+    style_name: str,
+    stem_name: str,
+    window: AudioSegment,
+) -> AudioSegment:
+    """Duck and filter Song A low-end so Song B can enter without masking."""
+    if style_name not in {"Style_A", "Style_C"} or len(window) == 0:
+        return window
+
+    managed = standardize_audiosegment(window)
+    midpoint_ms = max(1, len(managed) // 2)
+
+    if stem_name in {"bass", "drums"}:
+        first_half = managed[:midpoint_ms].fade(
+            from_gain=0.0,
+            to_gain=-20.0,
+            start=0,
+            duration=midpoint_ms,
+        )
+        second_half = managed[midpoint_ms:].fade(
+            from_gain=-20.0,
+            to_gain=-28.0,
+            start=0,
+            duration=max(1, len(managed) - midpoint_ms),
+        )
+        managed = combine_segments([first_half, second_half], managed)
+
+    if stem_name in {"bass", "other"}:
+        filtered = apply_high_pass(managed, cutoff_hz=250)
+        if stem_name == "bass":
+            filtered = filtered.apply_gain(linear_gain_to_db(0.75))
+        managed = filtered
+
+    return managed
+
+
 def build_song_a_transition_window(
     style_name: str,
     stem_name: str,
@@ -89,6 +130,7 @@ def build_song_a_transition_window(
     transition_ms: int,
     beat_ms: int,
     chorus_block_ms: tuple[int, int] | None,
+    enable_low_end_management: bool = True,
 ) -> AudioSegment:
     """Build Song A's outgoing window for one style."""
     if style_name == "Style_B":
@@ -109,6 +151,7 @@ def build_song_a_transition_window(
         stem_name=stem_name,
         window=looped_window,
         beat_ms=beat_ms,
+        enable_low_end_management=enable_low_end_management,
     )
 
 

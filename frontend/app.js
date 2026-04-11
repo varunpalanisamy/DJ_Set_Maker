@@ -395,15 +395,36 @@ const stemSongAList = document.getElementById("stem-song-a-list");
 const stemSongBList = document.getElementById("stem-song-b-list");
 const stemSongASelected = document.getElementById("stem-song-a-selected");
 const stemSongBSelected = document.getElementById("stem-song-b-selected");
-const btnLoadStems = document.getElementById("btn-load-stems");
 const gradualToggle = document.getElementById("gradual-toggle");
 const btnStyleA = document.getElementById("btn-style-a");
 const btnStyleB = document.getElementById("btn-style-b");
 const btnStyleC = document.getElementById("btn-style-c");
+const stemOpenPickerButton = document.getElementById("stem-open-picker");
+const stemPickerModal = document.getElementById("stem-picker-modal");
+const stemPickerConfirm = document.getElementById("stem-picker-confirm");
+const stemPickerCancel = document.getElementById("stem-picker-cancel");
+const stemPickerCancelTop = document.getElementById("stem-picker-cancel-top");
+const stemRerenderModal = document.getElementById("stem-rerender-modal");
+const stemRerenderYes = document.getElementById("stem-rerender-yes");
+const stemRerenderNo = document.getElementById("stem-rerender-no");
+const stemDebugLog = document.getElementById("stem-debug-log");
+const stemDebugClear = document.getElementById("stem-debug-clear");
+let pendingStemSession = null;
+
+function appendStemDebug(message) {
+  if (!stemDebugLog) return;
+  const entry = document.createElement("div");
+  entry.className = "stem-debug-entry";
+  const time = new Date().toLocaleTimeString();
+  entry.textContent = `[${time}] ${message}`;
+  stemDebugLog.prepend(entry);
+}
+
+window.appendStemDebug = appendStemDebug;
 
 function updateStemControls() {
   const hasBoth = !!(stemSelectedA && stemSelectedB);
-  btnLoadStems.disabled = !hasBoth;
+  stemPickerConfirm.disabled = !hasBoth;
   btnStyleA.disabled = !hasBoth;
   btnStyleB.disabled = !hasBoth;
   btnStyleC.disabled = !hasBoth;
@@ -429,22 +450,90 @@ function renderStemSelections() {
   updateStemControls();
 }
 
-btnLoadStems.addEventListener("click", () => {
+function toggleModal(modal, isOpen) {
+  modal.classList.toggle("hidden", !isOpen);
+  modal.setAttribute("aria-hidden", String(!isOpen));
+}
+
+function openStemPicker() {
+  toggleModal(stemPickerModal, true);
+}
+
+function closeStemPicker() {
+  toggleModal(stemPickerModal, false);
+}
+
+function closeStemRerenderModal() {
+  toggleModal(stemRerenderModal, false);
+}
+
+async function handleStemCreate() {
   if (!stemSelectedA || !stemSelectedB) return;
-  if (window.stemViz) {
-    window.stemViz.prepare(stemSelectedA.track_id, stemSelectedB.track_id);
+  closeStemPicker();
+
+  try {
+    appendStemDebug(`Create Transition clicked for ${stemSelectedA.track_id} -> ${stemSelectedB.track_id}`);
+    const startedAt = performance.now();
+    const response = await fetch("/api/stem_visualizer/prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        song_a_id: stemSelectedA.track_id,
+        song_b_id: stemSelectedB.track_id,
+      }),
+    });
+    const session = await response.json();
+    appendStemDebug(`Prepare request finished in ${((performance.now() - startedAt) / 1000).toFixed(2)}s`);
+    if (!response.ok) {
+      throw new Error(session.error || `HTTP ${response.status}`);
+    }
+
+    pendingStemSession = {
+      session,
+      selectedSongs: {
+        songA: stemSelectedA,
+        songB: stemSelectedB,
+      },
+    };
+
+    if (session.has_existing_transition) {
+      appendStemDebug("Existing rendered transition found. Asking whether to reuse or rerender.");
+      toggleModal(stemRerenderModal, true);
+      return;
+    }
+
+    appendStemDebug("No existing render found. Loading session and rendering Style A.");
+    await window.stemViz.loadSession(session, {
+      songA: stemSelectedA,
+      songB: stemSelectedB,
+    });
+
+    await window.stemViz.renderTransition(
+      stemSelectedA.track_id,
+      stemSelectedB.track_id,
+      "Style_A",
+      gradualToggle ? gradualToggle.checked : false,
+      true
+    );
+  } catch (error) {
+    appendStemDebug(`Create Transition failed: ${error.message}`);
+    const stemStatus = document.getElementById("stem-status");
+    if (stemStatus) {
+      stemStatus.textContent = `Could not open transition session: ${error.message}`;
+      stemStatus.className = "status error";
+    }
   }
-});
+}
 
 function makeStemStyleHandler(styleName) {
-  return () => {
+  return async () => {
     if (!stemSelectedA || !stemSelectedB) return;
     const gradual = gradualToggle ? gradualToggle.checked : false;
     [btnStyleA, btnStyleB, btnStyleC].forEach((b) => b.classList.remove("active"));
     const activeBtn = { Style_A: btnStyleA, Style_B: btnStyleB, Style_C: btnStyleC }[styleName];
     activeBtn?.classList.add("active");
     if (window.stemViz) {
-      window.stemViz.renderTransition(
+      await window.stemViz.renderTransition(
         stemSelectedA.track_id,
         stemSelectedB.track_id,
         styleName,
@@ -457,17 +546,33 @@ function makeStemStyleHandler(styleName) {
 btnStyleA.addEventListener("click", makeStemStyleHandler("Style_A"));
 btnStyleB.addEventListener("click", makeStemStyleHandler("Style_B"));
 btnStyleC.addEventListener("click", makeStemStyleHandler("Style_C"));
-
-// When a transition is rendered, show it in an alert-style status (or player if desired)
-window.addEventListener("stemTransitionReady", (event) => {
-  const { url, label } = event.detail;
-  const statusEl = document.getElementById("stem-status");
-  if (statusEl) {
-    statusEl.innerHTML =
-      `<span class="status success">${label} rendered. </span>` +
-      `<a href="${url}" download style="color:var(--accent);text-decoration:underline;">Download</a>`;
-    statusEl.className = "";
-  }
+stemOpenPickerButton.addEventListener("click", openStemPicker);
+stemPickerConfirm.addEventListener("click", handleStemCreate);
+stemPickerCancel.addEventListener("click", closeStemPicker);
+stemPickerCancelTop.addEventListener("click", closeStemPicker);
+stemRerenderYes.addEventListener("click", async () => {
+  closeStemRerenderModal();
+  if (!pendingStemSession) return;
+  appendStemDebug("User chose to rerender the transition.");
+  await window.stemViz.loadSession(pendingStemSession.session, pendingStemSession.selectedSongs);
+  await window.stemViz.renderTransition(
+    stemSelectedA.track_id,
+    stemSelectedB.track_id,
+    "Style_A",
+    gradualToggle ? gradualToggle.checked : false,
+    true
+  );
+  pendingStemSession = null;
+});
+stemRerenderNo.addEventListener("click", () => {
+  closeStemRerenderModal();
+  if (!pendingStemSession) return;
+  appendStemDebug("User chose to reuse the existing transition.");
+  window.stemViz.loadSession(pendingStemSession.session, pendingStemSession.selectedSongs);
+  pendingStemSession = null;
+});
+stemDebugClear.addEventListener("click", () => {
+  stemDebugLog.innerHTML = "";
 });
 
 switchView("download");

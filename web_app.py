@@ -14,10 +14,22 @@ from main import order_setlist_by_bpm
 from render_transition import OUTPUTS_DIR, render_all_styles
 from separate_stems import STEMS_DIR, process_track
 from transitions.core.audio_analysis import calculate_compatibility
+from transitions.core.audio_math import (
+    calculate_local_bpm,
+    calculate_preceding_local_bpm,
+    count_beats_in_window,
+    get_beat_index_for_time,
+    get_beat_timestamp,
+    get_duration_of_virtual_beats,
+    get_effective_bpm_match,
+    snap_to_nearest_beat,
+)
 from transitions.core.structural_logic import (
+    calculate_pickup_ms,
     get_optimal_exit_time,
     get_song_entry_time,
     load_metadata as load_track_metadata,
+    get_song_b_drop_time,
 )
 
 
@@ -79,6 +91,165 @@ def build_pair_payload(song_a_id: str, song_b_id: str, output_paths: list[Path])
         "label": f"{song_a_id} -> {song_b_id}",
         "styles": build_style_payload(output_paths),
     }
+
+
+def build_existing_style_payloads(pair_output_dir: Path) -> list[dict]:
+    """Return all existing rendered styles for one pair directory."""
+    output_paths: list[Path] = []
+    for style_name in STYLE_NAMES:
+        constant_path = pair_output_dir / f"{style_name}.mp3"
+        gradual_path = pair_output_dir / "gradual_bpm" / f"{style_name}.mp3"
+        if constant_path.is_file():
+            output_paths.append(constant_path)
+        if gradual_path.is_file():
+            output_paths.append(gradual_path)
+    return build_style_payload(output_paths)
+
+
+def compute_transition_visualization(song_a_id: str, song_b_id: str) -> dict:
+    """Compute shared visualization timing for a transition pair."""
+    metadata_a = load_track_metadata(song_a_id)
+    metadata_b = load_track_metadata(song_b_id)
+
+    entry_time_sec = get_song_entry_time(metadata_b)
+    drop_time_sec = get_song_b_drop_time(metadata_b, entry_time=entry_time_sec)
+    local_entry_bpm_b = calculate_local_bpm(metadata_b, entry_time_sec, drop_time_sec)
+    song_b_pickup_ms = calculate_pickup_ms(metadata_b, entry_time_sec)
+
+    raw_song_a_exit_ms = int(round(get_optimal_exit_time(metadata_a) * 1000.0))
+    exit_beat_index = get_beat_index_for_time(metadata_a, raw_song_a_exit_ms / 1000.0)
+    local_exit_bpm_a = calculate_preceding_local_bpm(metadata_a, raw_song_a_exit_ms)
+    _, _, song_a_beat_factor = get_effective_bpm_match(local_exit_bpm_a, local_entry_bpm_b)
+    transition_beats = count_beats_in_window(metadata_b, entry_time_sec, drop_time_sec)
+    if transition_beats <= 0:
+        raise ValueError("Could not determine transition beat count for the visualizer.")
+
+    transition_duration_ms = int(
+        round(
+            get_duration_of_virtual_beats(
+                metadata_a,
+                exit_beat_index,
+                transition_beats,
+                song_a_beat_factor,
+            )
+            * 1000.0
+        )
+    )
+    original_song_b_entry_ms = int(round(entry_time_sec * 1000.0))
+    original_song_b_entry_ms = snap_to_nearest_beat(original_song_b_entry_ms, metadata_b)
+    transition_start_ms = int(round(get_beat_timestamp(metadata_a, exit_beat_index) * 1000.0))
+    overlay_start_ms = max(0, transition_start_ms - song_b_pickup_ms)
+
+    return {
+        "song_a_id": song_a_id,
+        "song_b_id": song_b_id,
+        "song_a_exit_ms": transition_start_ms,
+        "song_a_exit_time": transition_start_ms / 1000.0,
+        "song_b_entry_ms": original_song_b_entry_ms,
+        "song_b_entry_time": original_song_b_entry_ms / 1000.0,
+        "song_b_pickup_ms": song_b_pickup_ms,
+        "song_b_pickup_time": song_b_pickup_ms / 1000.0,
+        "song_b_drop_ms": int(round(drop_time_sec * 1000.0)),
+        "song_b_drop_time": drop_time_sec,
+        "song_b_source_transition_ms": song_b_pickup_ms + max(0, int(round((drop_time_sec - entry_time_sec) * 1000.0))),
+        "song_b_source_transition_time": (song_b_pickup_ms / 1000.0) + max(0.0, drop_time_sec - entry_time_sec),
+        "transition_duration_ms": transition_duration_ms,
+        "transition_duration_time": transition_duration_ms / 1000.0,
+        "transition_end_ms": transition_start_ms + transition_duration_ms,
+        "transition_end_time": (transition_start_ms + transition_duration_ms) / 1000.0,
+        "overlay_start_ms": overlay_start_ms,
+        "overlay_start_time": overlay_start_ms / 1000.0,
+        "song_b_entry_on_timeline_ms": overlay_start_ms + song_b_pickup_ms,
+        "song_b_entry_on_timeline": (overlay_start_ms + song_b_pickup_ms) / 1000.0,
+    }
+
+
+def build_aligned_visualizer_stems(song_a_id: str, song_b_id: str, timing: dict) -> dict[str, dict[str, str]]:
+    """Create aligned Song A / Song B stem files for the shared visualizer timeline."""
+    pair_dir = TEMP_VIZ_DIR / "aligned" / f"{song_a_id}_to_{song_b_id}"
+    pair_dir.mkdir(parents=True, exist_ok=True)
+
+    overlay_start_ms = int(timing["overlay_start_ms"])
+    song_b_entry_ms = int(timing["song_b_entry_ms"])
+    song_b_pickup_ms = int(timing["song_b_pickup_ms"])
+
+    stem_urls: dict[str, dict[str, str]] = {"song_a": {}, "song_b": {}}
+    longest_duration_ms = 0
+
+    source_segments_a: dict[str, AudioSegment] = {}
+    source_segments_b: dict[str, AudioSegment] = {}
+    for stem_name in ("vocals", "drums", "bass", "other"):
+        path_a = next(
+            (candidate for candidate in (STEMS_DIR / song_a_id / f"{stem_name}.mp3", STEMS_DIR / song_a_id / f"{stem_name}.wav") if candidate.is_file()),
+            None,
+        )
+        path_b = next(
+            (candidate for candidate in (STEMS_DIR / song_b_id / f"{stem_name}.mp3", STEMS_DIR / song_b_id / f"{stem_name}.wav") if candidate.is_file()),
+            None,
+        )
+        if path_a is None or path_b is None:
+            raise FileNotFoundError(f"Stem file missing for {stem_name}.")
+
+        source_segments_a[stem_name] = AudioSegment.from_file(path_a)
+        source_segments_b[stem_name] = AudioSegment.from_file(path_b)
+
+    excerpt_start_ms = max(0, song_b_entry_ms - song_b_pickup_ms)
+    for stem_name in ("vocals", "drums", "bass", "other"):
+        longest_duration_ms = max(
+            longest_duration_ms,
+            len(source_segments_a[stem_name]),
+            overlay_start_ms + max(0, len(source_segments_b[stem_name]) - excerpt_start_ms),
+        )
+
+    silent_template = AudioSegment.silent(duration=0)
+    padded_song_a_segments: dict[str, AudioSegment] = {}
+    padded_song_b_segments: dict[str, AudioSegment] = {}
+    for stem_name in ("vocals", "drums", "bass", "other"):
+        song_a_segment = source_segments_a[stem_name]
+        song_b_excerpt = source_segments_b[stem_name][excerpt_start_ms:]
+        padded_song_a = song_a_segment + AudioSegment.silent(duration=max(0, longest_duration_ms - len(song_a_segment)))
+        padded_song_b = (
+            AudioSegment.silent(duration=overlay_start_ms, frame_rate=song_b_excerpt.frame_rate)
+            + song_b_excerpt
+        )
+        padded_song_b += AudioSegment.silent(duration=max(0, longest_duration_ms - len(padded_song_b)))
+
+        output_a = pair_dir / f"song_a_{stem_name}.mp3"
+        output_b = pair_dir / f"song_b_{stem_name}.mp3"
+        if not output_a.is_file():
+            padded_song_a.export(output_a, format="mp3", bitrate="128k")
+        if not output_b.is_file():
+            padded_song_b.export(output_b, format="mp3", bitrate="128k")
+
+        stem_urls["song_a"][stem_name] = f"/temp_viz/aligned/{song_a_id}_to_{song_b_id}/song_a_{stem_name}.mp3"
+        stem_urls["song_b"][stem_name] = f"/temp_viz/aligned/{song_a_id}_to_{song_b_id}/song_b_{stem_name}.mp3"
+        padded_song_a_segments[stem_name] = padded_song_a
+        padded_song_b_segments[stem_name] = padded_song_b
+
+    song_a_mix = (
+        padded_song_a_segments["vocals"]
+        .overlay(padded_song_a_segments["drums"])
+        .overlay(padded_song_a_segments["bass"])
+        .overlay(padded_song_a_segments["other"])
+    )
+    song_b_mix = (
+        padded_song_b_segments["vocals"]
+        .overlay(padded_song_b_segments["drums"])
+        .overlay(padded_song_b_segments["bass"])
+        .overlay(padded_song_b_segments["other"])
+    )
+    output_a_mix = pair_dir / "song_a_mix.mp3"
+    output_b_mix = pair_dir / "song_b_mix.mp3"
+    if not output_a_mix.is_file():
+        song_a_mix.export(output_a_mix, format="mp3", bitrate="128k")
+    if not output_b_mix.is_file():
+        song_b_mix.export(output_b_mix, format="mp3", bitrate="128k")
+    stem_urls["song_a"]["mix"] = f"/temp_viz/aligned/{song_a_id}_to_{song_b_id}/song_a_mix.mp3"
+    stem_urls["song_b"]["mix"] = f"/temp_viz/aligned/{song_a_id}_to_{song_b_id}/song_b_mix.mp3"
+
+    timing["total_duration_ms"] = longest_duration_ms
+    timing["total_duration"] = longest_duration_ms / 1000.0
+    return stem_urls
 
 
 @app.get("/")
@@ -242,7 +413,7 @@ def serve_temp_viz(filename: str):
 
 @app.post("/api/stem_visualizer/prepare")
 def prepare_stem_visualizer():
-    """Ensure stems exist, concatenate them for visualization, and return timing info."""
+    """Ensure stems exist, prepare aligned visualizer tracks, and report existing renders."""
     payload = request.get_json(silent=True) or {}
     song_a_id = str(payload.get("song_a_id") or "").strip()
     song_b_id = str(payload.get("song_b_id") or "").strip()
@@ -255,61 +426,25 @@ def prepare_stem_visualizer():
         process_track(song_a_id)
         print(f"[StemViz] Ensuring stems for {song_b_id}")
         process_track(song_b_id)
-
-        meta_a = load_track_metadata(song_a_id)
-        meta_b = load_track_metadata(song_b_id)
-        song_a_exit_time = get_optimal_exit_time(meta_a)
-        song_b_entry_time = get_song_entry_time(meta_b)
-
         TEMP_VIZ_DIR.mkdir(parents=True, exist_ok=True)
-        concat_dir = TEMP_VIZ_DIR / f"{song_a_id}_to_{song_b_id}"
-        concat_dir.mkdir(parents=True, exist_ok=True)
+        timing = compute_transition_visualization(song_a_id, song_b_id)
+        stem_urls = build_aligned_visualizer_stems(song_a_id, song_b_id, timing)
+        pair_output_dir = OUTPUTS_DIR / f"{song_a_id}_to_{song_b_id}"
+        existing_styles = build_existing_style_payloads(pair_output_dir)
 
-        stem_names = ["vocals", "drums", "bass", "other"]
-
-        # Skip concatenation if all output files are already current
-        concat_exists = all((concat_dir / f"{s}.mp3").is_file() for s in stem_names)
-
-        stem_urls: dict[str, str] = {}
-        song_a_duration_sec: float | None = None
-
-        if not concat_exists:
-            print(f"[StemViz] Concatenating stems for visualization...")
-            for stem in stem_names:
-                path_a = STEMS_DIR / song_a_id / f"{stem}.mp3"
-                path_b = STEMS_DIR / song_b_id / f"{stem}.mp3"
-
-                if not path_a.is_file() or not path_b.is_file():
-                    return jsonify({"error": f"Stem file missing: {stem}"}), 500
-
-                seg_a = AudioSegment.from_mp3(str(path_a))
-                seg_b = AudioSegment.from_mp3(str(path_b))
-
-                if song_a_duration_sec is None:
-                    song_a_duration_sec = len(seg_a) / 1000.0
-
-                combined = seg_a + seg_b
-                out_path = concat_dir / f"{stem}.mp3"
-                combined.export(str(out_path), format="mp3", bitrate="128k")
-        else:
-            print(f"[StemViz] Reusing cached concatenated stems.")
-
-        if song_a_duration_sec is None:
-            # Read duration from cached file
-            seg_a = AudioSegment.from_mp3(str(STEMS_DIR / song_a_id / "vocals.mp3"))
-            song_a_duration_sec = len(seg_a) / 1000.0
-
-        for stem in stem_names:
-            stem_urls[stem] = f"/temp_viz/{song_a_id}_to_{song_b_id}/{stem}.mp3"
-
-        song_a_dur = song_a_duration_sec or 0.0
-        return jsonify({
-            "stems": stem_urls,
-            "song_a_exit_time": song_a_exit_time,
-            "song_a_duration": song_a_dur,
-            "song_b_entry_time": song_b_entry_time,
-            "song_b_entry_in_combined": song_a_dur + song_b_entry_time,
-        })
+        return jsonify(
+            {
+                "song_a_id": song_a_id,
+                "song_b_id": song_b_id,
+                "pair_label": f"{song_a_id} -> {song_b_id}",
+                "song_a_title": str(load_track_metadata(song_a_id).get("title") or song_a_id),
+                "song_b_title": str(load_track_metadata(song_b_id).get("title") or song_b_id),
+                "stems": stem_urls,
+                "timing": timing,
+                "has_existing_transition": all_transitions_rendered(pair_output_dir),
+                "existing_styles": existing_styles,
+            }
+        )
 
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
@@ -325,6 +460,7 @@ def render_stem_transition():
     song_b_id = str(payload.get("song_b_id") or "").strip()
     style_name = str(payload.get("style") or "Style_A").strip()
     gradual = bool(payload.get("gradual", False))
+    force = bool(payload.get("force", False))
 
     if not song_a_id or not song_b_id:
         return jsonify({"error": "song_a_id and song_b_id are required."}), 400
@@ -338,7 +474,7 @@ def render_stem_transition():
 
         pair_output_dir = OUTPUTS_DIR / f"{song_a_id}_to_{song_b_id}"
 
-        if not all_transitions_rendered(pair_output_dir):
+        if force or not all_transitions_rendered(pair_output_dir):
             print(f"[StemViz] Rendering all styles for {song_a_id} -> {song_b_id}")
             render_all_styles(song_a_id, song_b_id, pair_output_dir)
 
@@ -357,6 +493,7 @@ def render_stem_transition():
             "url": f"/outputs/{relative.as_posix()}",
             "saved_path": str(style_path.relative_to(PROJECT_ROOT)),
             "label": label,
+            "styles": build_existing_style_payloads(pair_output_dir),
         })
 
     except FileNotFoundError as exc:

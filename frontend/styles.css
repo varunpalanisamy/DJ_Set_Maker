@@ -442,6 +442,380 @@ h2 {
 
 /* ── Stem Visualizer ─────────────────────────────────────────────────────── */
 
+.stem-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.stem-session-label {
+  max-width: 58ch;
+}
+
+.stem-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stem-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stem-zoom-group {
+  min-width: min(360px, 100%);
+}
+
+.stem-zoom-slider {
+  min-width: 180px;
+}
+
+.stem-stage-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.stem-stage-viewport {
+  position: relative;
+  overflow: auto hidden;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)),
+    rgba(7, 12, 18, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  scrollbar-width: none;
+}
+
+.stem-stage-viewport.is-scrubbing {
+  cursor: ew-resize;
+}
+
+.stem-stage-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.stem-stage-content {
+  position: relative;
+  padding: 14px 18px 20px;
+}
+
+.stem-global-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(255, 251, 126, 1), rgba(255, 218, 74, 0.96));
+  box-shadow: 0 0 0 1px rgba(255, 240, 163, 0.22), 0 0 24px rgba(255, 223, 93, 0.5);
+  pointer-events: auto;
+  z-index: 40;
+  display: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.stem-global-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #fff7a8;
+  box-shadow: 0 0 0 4px rgba(255, 223, 93, 0.24);
+}
+
+.stem-global-playhead::after {
+  content: "PLAYHEAD";
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+  color: rgba(255, 247, 194, 0.9);
+  white-space: nowrap;
+}
+
+.stem-timeline-top,
+.stem-track-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.stem-group {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.stem-group--song-a {
+  background: linear-gradient(180deg, rgba(34, 77, 98, 0.22), rgba(16, 24, 34, 0.16));
+}
+
+.stem-group--song-b {
+  background: linear-gradient(180deg, rgba(92, 54, 28, 0.20), rgba(36, 20, 30, 0.18));
+}
+
+.stem-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.stem-group-kicker {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.stem-track-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.stem-group-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.stem-collapse-button {
+  min-width: 92px;
+}
+
+.stem-track-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.stem-track-label--timeline {
+  align-self: start;
+  padding-top: 16px;
+}
+
+.stem-track-surface {
+  position: relative;
+  min-height: 72px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.stem-waveform {
+  position: absolute;
+  inset: 0;
+}
+
+.stem-track-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.stem-track-overlay svg {
+  display: block;
+}
+
+.stem-overlay-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 7 5;
+}
+
+.stem-overlay-line--song_a {
+  stroke: rgba(116, 224, 255, 0.92);
+}
+
+.stem-overlay-line--song_b {
+  stroke: rgba(255, 182, 102, 0.9);
+}
+
+.stem-overlay-filter circle {
+  fill: rgba(255, 215, 85, 0.15);
+  stroke: rgba(255, 215, 85, 0.85);
+  stroke-width: 1;
+}
+
+.stem-overlay-filter text {
+  fill: rgba(255, 245, 191, 0.92);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.stem-track-surface--vocals {
+  background:
+    linear-gradient(180deg, rgba(55, 191, 203, 0.08), rgba(55, 191, 203, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.stem-track-surface--drums {
+  background:
+    linear-gradient(180deg, rgba(245, 140, 44, 0.08), rgba(245, 140, 44, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.stem-track-surface--bass {
+  background:
+    linear-gradient(180deg, rgba(158, 79, 235, 0.09), rgba(158, 79, 235, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.stem-track-surface--other,
+.stem-track-surface--mix {
+  background:
+    linear-gradient(180deg, rgba(240, 244, 249, 0.06), rgba(240, 244, 249, 0.015)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.stem-timeline-track {
+  position: relative;
+  min-height: 56px;
+}
+
+.stem-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.stem-tick.major {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.stem-tick-label {
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stem-transition-band,
+.stem-style-envelope {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.stem-transition-band {
+  background: linear-gradient(90deg, rgba(0, 255, 200, 0.10), rgba(255, 223, 93, 0.08), rgba(255, 99, 99, 0.12));
+  border-left: 2px solid rgba(0, 255, 200, 0.72);
+  border-right: 2px solid rgba(255, 99, 99, 0.68);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), 0 0 36px rgba(0, 255, 200, 0.08);
+}
+
+.stem-style-envelope {
+  left: 0;
+  right: 0;
+}
+
+.stem-scrollbar-row {
+  padding: 0 4px 6px;
+}
+
+.stem-debug-panel {
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stem-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stem-debug-log {
+  margin-top: 12px;
+  max-height: 132px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.stem-debug-entry {
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  word-break: break-word;
+}
+
+.modal-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 8, 14, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  padding: 24px;
+  border-radius: 28px;
+  background: rgba(10, 16, 24, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow);
+}
+
+.modal-card--wide {
+  width: min(1100px, 100%);
+}
+
+.modal-header,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-actions {
+  margin-top: 20px;
+  justify-content: flex-end;
+}
+
 .stem-controls {
   display: flex;
   align-items: center;
@@ -697,5 +1071,23 @@ h2 {
 
   .timeline-wrap {
     gap: 8px;
+  }
+
+  .stem-page-header,
+  .modal-header,
+  .modal-actions,
+  .stem-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stem-timeline-top,
+  .stem-track-row {
+    grid-template-columns: 1fr;
+  }
+
+  .stem-track-label--timeline,
+  .stem-track-label {
+    padding-top: 0;
   }
 }

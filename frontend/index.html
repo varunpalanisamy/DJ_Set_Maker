@@ -152,46 +152,43 @@
 
         <!-- ── Stem Visualizer ─────────────────────────────────────────── -->
         <section id="stem-view" class="view-panel hidden">
-          <p class="eyebrow">Stem Visualizer</p>
-          <h2>Visualize stems across the transition.</h2>
-          <p class="intro">
-            Pick two songs, load their stems, then render a style to see how each layer plays
-            through the transition point.
-          </p>
-
-          <!-- Song pickers -->
-          <div class="matcher-grid">
-            <section class="song-column">
-              <div class="column-header">
-                <p class="player-label">Song A</p>
-                <p id="stem-song-a-selected" class="selection-label">No song selected</p>
-              </div>
-              <div id="stem-song-a-list" class="song-list" role="listbox" aria-label="Song A"></div>
-            </section>
-            <section class="song-column">
-              <div class="column-header">
-                <p class="player-label">Song B</p>
-                <p id="stem-song-b-selected" class="selection-label">No song selected</p>
-              </div>
-              <div id="stem-song-b-list" class="song-list" role="listbox" aria-label="Song B"></div>
-            </section>
+          <div class="stem-page-header">
+            <div>
+              <p class="eyebrow">Stem Visualizer</p>
+              <h2>Transition stage</h2>
+              <p id="stem-session-label" class="intro stem-session-label">
+                Pick two songs to open a transition session.
+              </p>
+            </div>
+            <button id="stem-open-picker" class="action-button" type="button">Create / Change Transition</button>
           </div>
 
-          <!-- Controls row -->
-          <div class="stem-controls">
-            <label class="toggle-label" for="gradual-toggle">
-              <span>Gradual BPM</span>
-              <span class="toggle-switch">
-                <input type="checkbox" id="gradual-toggle" />
-                <span class="toggle-slider"></span>
-              </span>
-            </label>
+          <div class="stem-toolbar">
+            <div class="stem-toolbar-group">
+              <button id="stem-play-btn" class="play-toggle" type="button" disabled>Play</button>
+              <span id="stem-current-time" class="timecode">0:00</span>
+              <span class="timecode">/</span>
+              <span id="stem-total-time" class="timecode">0:00</span>
+            </div>
 
-            <button id="btn-load-stems" class="action-button stem-load-btn" type="button" disabled>
-              Load Stems
-            </button>
+            <div class="stem-toolbar-group stem-zoom-group">
+              <span class="player-label">Zoom</span>
+              <button id="stem-zoom-out" class="chip" type="button">-</button>
+              <input id="stem-zoom" class="timeline stem-zoom-slider" type="range" min="1" max="240" step="1" value="90" />
+              <button id="stem-zoom-in" class="chip" type="button">+</button>
+            </div>
 
-            <div class="style-buttons">
+            <div class="stem-toolbar-group">
+              <label class="toggle-label" for="gradual-toggle">
+                <span>Gradual BPM</span>
+                <span class="toggle-switch">
+                  <input type="checkbox" id="gradual-toggle" />
+                  <span class="toggle-slider"></span>
+                </span>
+              </label>
+            </div>
+
+            <div class="stem-toolbar-group style-buttons">
               <button id="btn-style-a" class="style-btn" type="button" disabled>Style A</button>
               <button id="btn-style-b" class="style-btn" type="button" disabled>Style B</button>
               <button id="btn-style-c" class="style-btn" type="button" disabled>Style C</button>
@@ -199,58 +196,185 @@
           </div>
 
           <p id="stem-status" class="status" aria-live="polite"></p>
+          <div id="stem-debug-panel" class="stem-debug-panel">
+            <div class="stem-debug-header">
+              <span class="player-label">Debug Log</span>
+              <button id="stem-debug-clear" class="chip" type="button">Clear</button>
+            </div>
+            <div id="stem-debug-log" class="stem-debug-log"></div>
+          </div>
 
-          <!-- Visualizer area (shown after stems load) -->
           <div id="stem-visualizer-area" class="stem-visualizer-area hidden">
+            <div class="stem-stage-shell">
+              <div id="stem-stage-viewport" class="stem-stage-viewport">
+                <div id="stem-global-playhead" class="stem-global-playhead"></div>
+                <div id="stem-stage-content" class="stem-stage-content">
+                  <div class="stem-timeline-top">
+                    <div class="stem-track-label stem-track-label--timeline">Timeline</div>
+                    <div class="stem-track-surface">
+                      <div id="stem-timeline-track" class="stem-timeline-track"></div>
+                      <div id="stem-transition-band" class="stem-transition-band"></div>
+                      <div id="stem-style-envelope" class="stem-style-envelope"></div>
+                    </div>
+                  </div>
 
-            <!-- Timeline bar row -->
-            <div class="stem-timeline-row">
-              <div class="stem-label-col"></div>
-              <div class="stem-wave-col" style="position:relative;">
-                <div id="timeline-container" class="stem-timeline-track"></div>
-                <div id="stem-transition-marker" class="stem-transition-marker" style="display:none;"></div>
+                  <div class="stem-group stem-group--song-a" data-group="song_a">
+                    <div class="stem-group-header">
+                      <div>
+                        <div class="stem-group-kicker">EXITING</div>
+                        <div id="stem-group-title-a" class="stem-group-title">Song A</div>
+                      </div>
+                      <button id="stem-collapse-a" class="chip stem-collapse-button" type="button">Collapse</button>
+                    </div>
+                    <div id="stem-song-a-mix-row" class="stem-track-row stem-track-row--mix hidden">
+                      <div class="stem-track-label">Mix</div>
+                      <div class="stem-track-surface stem-track-surface--mix">
+                        <div id="waveform-song-a-mix" class="stem-waveform"></div>
+                        <div id="overlay-song-a-mix" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div id="stem-song-a-tracks" class="stem-track-stack">
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Vocals</div>
+                      <div class="stem-track-surface stem-track-surface--vocals">
+                        <div id="waveform-song-a-vocals" class="stem-waveform"></div>
+                        <div id="overlay-song-a-vocals" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Drums</div>
+                      <div class="stem-track-surface stem-track-surface--drums">
+                        <div id="waveform-song-a-drums" class="stem-waveform"></div>
+                        <div id="overlay-song-a-drums" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Bass</div>
+                      <div class="stem-track-surface stem-track-surface--bass">
+                        <div id="waveform-song-a-bass" class="stem-waveform"></div>
+                        <div id="overlay-song-a-bass" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Music</div>
+                      <div class="stem-track-surface stem-track-surface--other">
+                        <div id="waveform-song-a-other" class="stem-waveform"></div>
+                        <div id="overlay-song-a-other" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    </div>
+                  </div>
+
+                  <div class="stem-group stem-group--song-b" data-group="song_b">
+                    <div class="stem-group-header">
+                      <div>
+                        <div class="stem-group-kicker">ENTERING</div>
+                        <div id="stem-group-title-b" class="stem-group-title">Song B</div>
+                      </div>
+                      <button id="stem-collapse-b" class="chip stem-collapse-button" type="button">Collapse</button>
+                    </div>
+                    <div id="stem-song-b-mix-row" class="stem-track-row stem-track-row--mix hidden">
+                      <div class="stem-track-label">Mix</div>
+                      <div class="stem-track-surface stem-track-surface--mix">
+                        <div id="waveform-song-b-mix" class="stem-waveform"></div>
+                        <div id="overlay-song-b-mix" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div id="stem-song-b-tracks" class="stem-track-stack">
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Vocals</div>
+                      <div class="stem-track-surface stem-track-surface--vocals">
+                        <div id="waveform-song-b-vocals" class="stem-waveform"></div>
+                        <div id="overlay-song-b-vocals" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Drums</div>
+                      <div class="stem-track-surface stem-track-surface--drums">
+                        <div id="waveform-song-b-drums" class="stem-waveform"></div>
+                        <div id="overlay-song-b-drums" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Bass</div>
+                      <div class="stem-track-surface stem-track-surface--bass">
+                        <div id="waveform-song-b-bass" class="stem-waveform"></div>
+                        <div id="overlay-song-b-bass" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    <div class="stem-track-row">
+                      <div class="stem-track-label">Music</div>
+                      <div class="stem-track-surface stem-track-surface--other">
+                        <div id="waveform-song-b-other" class="stem-waveform"></div>
+                        <div id="overlay-song-b-other" class="stem-track-overlay"></div>
+                      </div>
+                    </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <!-- Waveform rows -->
-            <div class="stem-row">
-              <div class="stem-label-col">Vocals</div>
-              <div id="waveform-vocals" class="stem-wave-col"></div>
-            </div>
-            <div class="stem-row">
-              <div class="stem-label-col">Drums</div>
-              <div id="waveform-drums" class="stem-wave-col"></div>
-            </div>
-            <div class="stem-row">
-              <div class="stem-label-col">Bass</div>
-              <div id="waveform-bass" class="stem-wave-col"></div>
-            </div>
-            <div class="stem-row">
-              <div class="stem-label-col">Music</div>
-              <div id="waveform-other" class="stem-wave-col"></div>
-            </div>
-
-            <!-- Shared scrollbar -->
-            <div class="stem-scrollbar-row">
-              <div class="stem-label-col"></div>
-              <div class="stem-wave-col">
-                <input id="stem-scrollbar" class="stem-scrollbar" type="range"
-                       min="0" max="1000" value="0" step="1" />
+              <div class="stem-scrollbar-row">
+                <input id="stem-scrollbar" class="stem-scrollbar" type="range" min="0" max="1000" value="0" step="1" />
               </div>
-            </div>
-
-            <!-- Playback controls -->
-            <div class="stem-playback-row">
-              <button id="stem-play-btn" class="play-toggle" type="button">Play</button>
-              <span id="stem-current-time" class="timecode">0:00</span>
-              <span class="timecode" style="color:var(--muted)">/</span>
-              <span id="stem-total-time" class="timecode">0:00</span>
             </div>
           </div>
         </section>
 
       </section>
     </main>
+
+    <div id="stem-picker-modal" class="modal-shell hidden" aria-hidden="true">
+      <div class="modal-card modal-card--wide">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Create Transition</p>
+            <h3>Pick Song A and Song B</h3>
+          </div>
+          <button id="stem-picker-cancel-top" class="chip" type="button">Close</button>
+        </div>
+
+        <div class="matcher-grid">
+          <section class="song-column">
+            <div class="column-header">
+              <p class="player-label">Song A</p>
+              <p id="stem-song-a-selected" class="selection-label">No song selected</p>
+            </div>
+            <div id="stem-song-a-list" class="song-list" role="listbox" aria-label="Stem Song A"></div>
+          </section>
+          <section class="song-column">
+            <div class="column-header">
+              <p class="player-label">Song B</p>
+              <p id="stem-song-b-selected" class="selection-label">No song selected</p>
+            </div>
+            <div id="stem-song-b-list" class="song-list" role="listbox" aria-label="Stem Song B"></div>
+          </section>
+        </div>
+
+        <div class="modal-actions">
+          <button id="stem-picker-cancel" class="chip" type="button">Cancel</button>
+          <button id="stem-picker-confirm" class="action-button" type="button" disabled>Create Transition</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="stem-rerender-modal" class="modal-shell hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Transition Exists</p>
+            <h3>Use existing render or make it again?</h3>
+          </div>
+        </div>
+        <p class="intro">
+          We already found this pair in the outputs folder. You can load the existing transition immediately or rerun the render.
+        </p>
+        <div class="modal-actions">
+          <button id="stem-rerender-no" class="chip" type="button">Use Existing</button>
+          <button id="stem-rerender-yes" class="action-button" type="button">Render Again</button>
+        </div>
+      </div>
+    </div>
 
     <script src="app.js"></script>
     <script type="module" src="stem-visualizer.js"></script>

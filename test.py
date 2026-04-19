@@ -16,7 +16,7 @@ class DataProcessor:
     def average(self):
         if not self.values:
             return 0
-        return sum(self.values) / len(self.values)
+        return round(sum(self.values) / len(self.values), 2)
 
     def max_value(self):
         return max(self.values) if self.values else None
@@ -32,7 +32,7 @@ def circle_area(radius):
 
 def log_message(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {message}")
+    print(f"[INFO {timestamp}] {message}")
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
     processor = DataProcessor(scores)
 
     log_message(f"Scores: {scores}")
-    log_message(f"Average: {processor.average():.2f}")
+    log_message(f"Average: {processor.average()}")
     log_message(f"Normalized: {processor.normalize()}")
     log_message(f"Max: {processor.max_value()}")
     log_message(f"Circle area (r=3): {circle_area(3):.2f}")
